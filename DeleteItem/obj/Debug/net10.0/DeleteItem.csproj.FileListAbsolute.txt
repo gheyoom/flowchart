@@ -1,0 +1,8 @@
+G:\My Drive\FlowChartApp2\DeleteItem\obj\Debug\net10.0\DeleteItem.csproj.AssemblyReference.cache
+G:\My Drive\FlowChartApp2\DeleteItem\obj\Debug\net10.0\DeleteItem.GeneratedMSBuildEditorConfig.editorconfig
+G:\My Drive\FlowChartApp2\DeleteItem\obj\Debug\net10.0\DeleteItem.AssemblyInfoInputs.cache
+G:\My Drive\FlowChartApp2\DeleteItem\obj\Debug\net10.0\DeleteItem.AssemblyInfo.cs
+G:\My Drive\FlowChartApp2\DeleteItem\obj\Debug\net10.0\DeleteItem.csproj.CoreCompileInputs.cache
+G:\My Drive\FlowChartApp2\DeleteItem\obj\Debug\net10.0\DeleteItem.dll
+G:\My Drive\FlowChartApp2\DeleteItem\obj\Debug\net10.0\refint\DeleteItem.dll
+G:\My Drive\FlowChartApp2\DeleteItem\obj\Debug\net10.0\DeleteItem.pdb

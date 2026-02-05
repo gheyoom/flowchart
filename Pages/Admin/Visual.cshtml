@@ -1,0 +1,1120 @@
+@page
+@model FlowChartApp.Pages.Admin.VisualModel
+@{
+    ViewData["Title"] = "Interactive Visual Editor";
+}
+
+<!-- Toolbar -->
+<div class="editor-toolbar">
+    <div class="btn-group">
+        <button class="btn btn-primary" onclick="zoomIn()" title="Zoom In"><i class="bi bi-zoom-in"></i> +</button>
+        <button class="btn btn-primary" onclick="zoomOut()" title="Zoom Out"><i class="bi bi-zoom-out"></i> -</button>
+        <button class="btn btn-light" onclick="resetView()" title="Fit View"><i class="bi bi-arrows-fullscreen"></i></button>
+    </div>
+    
+    <div class="btn-group">
+        <a asp-page="./Create" class="btn btn-success" title="Add New Box"><i class="bi bi-plus-square"></i> New</a>
+        <button class="btn btn-warning text-dark" onclick="openLegendModal()" title="Manage Legend">
+            <i class="bi bi-list-task"></i> Legend
+        </button>
+        <button class="btn btn-info text-white" onclick="toggleSnap()" id="btnSnap" title="Toggle Snap Grid">
+            <i class="bi bi-grid-3x3"></i> Snap
+        </button>
+    </div>
+    
+    <div class="d-flex align-items-center">
+        <span class="badge bg-secondary" id="zoomLevel">100%</span>
+    </div>
+</div>
+
+<div class="editor-container">
+    <div id="visual-canvas" class="visual-canvas">
+        <div id="canvas-content" class="canvas-content">
+            @foreach (var box in Model.FlowBoxes)
+            {
+                <div class="draggable-box" id="box-@box.Id" data-id="@box.Id" 
+                     style="transform: translate(@(box.PosX)px, @(box.PosY)px); background-color: @box.BackgroundColor; border: 2px @box.BorderStyle @box.BorderColor; @(string.IsNullOrEmpty(box.Width) ? "" : $"min-width: {box.Width};") @(string.IsNullOrEmpty(box.Height) ? "" : $"min-height: {box.Height};")"
+                     onclick="selectBox(@box.Id, event)">
+                    <div class="box-handle">
+                        <i class="bi bi-arrows-move"></i> <span id="label-@box.Id">@box.Name</span>
+                    </div>
+                    <div class="box-body">
+                        @if (!string.IsNullOrEmpty(box.Description)) { <div class="text-muted small">@box.Description</div> }
+                        @if (!string.IsNullOrEmpty(box.DescriptionArabic)) { <div class="fw-bold">@box.DescriptionArabic</div> }
+                    </div>
+                    <!-- Selection Indicator -->
+                    <div class="selection-ring"></div>
+                    
+                    <!-- Connection Handle -->
+                    <div class="connection-handle" data-id="@box.Id"></div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Layout */
+    .editor-toolbar {
+        position: fixed;
+        bottom: 20px; /* Bottom docked */
+        top: auto;
+        left: 50%;
+        transform: translateX(-50%); /* Center horizontal */
+        width: auto;
+        background: white;
+        padding: 10px 20px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 1000;
+        display: flex;
+        flex-direction: row; /* Horizontal layout */
+        align-items: center;
+        gap: 15px;
+    }
+    
+    .editor-container {
+        position: fixed;
+        top: 60px;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #e9ecef;
+        overflow: hidden; /* We handle scroll/pan manually or allow auto with inner canvas */
+    }
+
+    .visual-canvas {
+        width: 100%;
+        height: 100%;
+        overflow: auto; /* Scrollbars for large content */
+        position: relative;
+        cursor: grab;
+    }
+    
+    .visual-canvas:active {
+        cursor: grabbing;
+    }
+    
+    .canvas-content {
+        width: 5000px; /* Massive canvas */
+        height: 5000px;
+        position: relative; /* Origin for boxes */
+        transform-origin: 0 0;
+        background-image: radial-gradient(#dee2e6 1px, transparent 1px);
+        background-size: 20px 20px; /* Grid dots */
+    }
+
+    .draggable-box {
+        position: absolute;
+        width: auto;
+        min-width: 220px;
+        max-width: 500px;
+        overflow-wrap: break-word;
+        background: white;
+        border: 2px solid #6c757d;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        z-index: 100;
+        user-select: none;
+        transition: box-shadow 0.2s, transform 0.1s; /* No transition on transform during drag handled by JS, but useful for other updates */
+    }
+    
+    .draggable-box:hover {
+        box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+        z-index: 101;
+    }
+    
+    .draggable-box.selected {
+        border-color: #0d6efd !important;
+        box-shadow: 0 0 0 4px rgba(13, 110, 253, 0.25);
+        z-index: 110;
+    }
+
+    .box-handle {
+        background: #f8f9fa;
+        color: #333;
+        padding: 8px 12px;
+        cursor: grab;
+        font-weight: 600;
+        border-bottom: 1px solid #eee;
+        border-radius: 6px 6px 0 0;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .box-handle:active {
+        cursor: grabbing;
+    }
+
+    .box-body {
+        padding: 15px;
+        text-align: center;
+        font-size: 0.8rem;
+        color: #666;
+        cursor: pointer;
+    }
+    
+    .box-body:hover {
+        color: #0d6efd;
+    }
+    
+    /* Fix for Tab Visibility */
+    .nav-tabs .nav-link, 
+    .nav-tabs button.nav-link {
+        color: #495057 !important; /* Dark gray forced */
+        font-weight: 600;
+    }
+    .nav-tabs .nav-link.active,
+    .nav-tabs button.nav-link.active {
+        color: #0d6efd !important; /* Primary blue for active forced */
+        border-color: #dee2e6 #dee2e6 #fff !important;
+    }
+    
+    /* Connection Handle */
+    .connection-handle {
+        position: absolute;
+        right: -8px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 14px;
+        height: 14px;
+        background: #0d6efd;
+        border: 2px solid white;
+        border-radius: 50%;
+        cursor: crosshair;
+        opacity: 0;
+        transition: opacity 0.2s, transform 0.2s;
+        z-index: 200;
+    }
+    
+    .draggable-box:hover .connection-handle {
+        opacity: 1;
+    }
+    
+    .connection-handle:hover {
+        transform: translateY(-50%) scale(1.3);
+    }
+
+    /* Connection Labels - Interactive Menu */
+    .conn-label {
+        background: white;
+        border: 2px solid #0d6efd;
+        border-radius: 20px;
+        padding: 4px 6px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        opacity: 0.95;
+        transition: all 0.2s;
+        pointer-events: auto !important;
+        user-select: none;
+        z-index: 5000 !important;
+        cursor: default;
+    }
+    
+    .conn-label i {
+        font-size: 16px;
+        line-height: 1;
+    }
+
+    .conn-label:hover {
+        opacity: 1;
+        transform: scale(1.1);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+    }
+
+    .conn-btn {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: none;
+        background: #f8f9fa;
+        color: #333;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .conn-btn-delete:hover {
+        background: #dc3545;
+        color: white;
+    }
+
+    .conn-btn-edit:hover {
+        background: #0d6efd;
+        color: white;
+    }
+
+    /* Highlight connected lines on hover */
+    .leader-line {
+        pointer-events: none !important;
+    }
+    
+    .leader-line-line-path, 
+    .leader-line-label-content,
+    .leader-line-label {
+        pointer-events: auto !important;
+        cursor: pointer;
+    }
+    
+    .leader-line:hover .leader-line-line-path {
+        stroke-width: 4px !important;
+    }
+    
+    .leader-line-label {
+        z-index: 5000 !important;
+    }
+</style>
+
+<!-- Bootstrap Icons -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+
+<div style="background: red; color: white; padding: 10px; text-align: center; font-weight: bold; position: fixed; top: 0; left: 0; right: 0; z-index: 9999;">DIAGNOSTIC VERSION 2.0 - CHECK FOR LABELS</div>
+
+<!-- Legend Modal -->
+<div class="modal fade" id="legendModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Manage Legend</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="legendList" class="mb-3">
+                    <!-- Loaded dynamically -->
+                </div>
+                
+                <hr />
+                <h5>Add New Item</h5>
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control" id="newLegendTitle" placeholder="Title">
+                    </div>
+                    <div class="col-md-2">
+                        <input type="color" class="form-control form-control-color" id="newLegendBg" value="#ffffff" title="Background Color">
+                    </div>
+                    <div class="col-md-2">
+                        <input type="color" class="form-control form-control-color" id="newLegendBorder" value="#000000" title="Border Color">
+                    </div>
+                    <div class="col-md-2">
+                         <select class="form-select" id="newLegendStyle">
+                             <option value="solid">Solid</option>
+                             <option value="dashed">Dashed</option>
+                             <option value="dotted">Dotted</option>
+                         </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-success w-100" onclick="addLegendItem()">Add</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Edit Flow Box</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editBoxId">
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Name (Title)</label>
+                        <input type="text" class="form-control" id="editName">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Width</label>
+                        <input type="text" class="form-control" id="editWidth" placeholder="auto">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Height</label>
+                        <input type="text" class="form-control" id="editHeight" placeholder="auto">
+                    </div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Description (English)</label>
+                        <textarea class="form-control" id="editDescription" rows="2"></textarea>
+                    </div>
+                    <div class="col-md-6 text-end">
+                        <label class="form-label">Description (Arabic)</label>
+                        <textarea class="form-control" id="editDescriptionArabic" rows="2" dir="rtl"></textarea>
+                    </div>
+                </div>
+
+                <ul class="nav nav-tabs" id="editTabs" role="tablist">
+                    <li class="nav-item">
+                        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-links" type="button">Links</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-style" type="button">Style</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-conn" type="button">Connections</button>
+                    </li>
+                </ul>
+                
+                <div class="tab-content params-tab-content p-3 border border-top-0 rounded-bottom">
+                    <!-- Links Tab -->
+                    <div class="tab-pane fade show active" id="tab-links">
+                        <div class="row g-2">
+                            <div class="col-md-4 border-end">
+                                <h6>Right Link</h6>
+                                <input type="text" class="form-control mb-1" id="editLinkRightText" placeholder="Text">
+                                <input type="text" class="form-control" id="editLinkRightUrl" placeholder="URL">
+                            </div>
+                            <div class="col-md-4 border-end">
+                                <h6>Middle Link</h6>
+                                <input type="text" class="form-control mb-1" id="editLinkMiddleText" placeholder="Text">
+                                <input type="text" class="form-control" id="editLinkMiddleUrl" placeholder="URL">
+                            </div>
+                            <div class="col-md-4">
+                                <h6>Left Link</h6>
+                                <input type="text" class="form-control mb-1" id="editLinkLeftText" placeholder="Text">
+                                <input type="text" class="form-control" id="editLinkLeftUrl" placeholder="URL">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Style Tab -->
+                    <div class="tab-pane fade" id="tab-style">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <label class="form-label">Background Color</label>
+                                <input type="color" class="form-control form-control-color w-100" id="editBgColor" value="#ffffff">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Border Color</label>
+                                <input type="color" class="form-control form-control-color w-100" id="editBorderColor" value="#6c757d">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Border Style</label>
+                                <select class="form-select" id="editBorderStyle">
+                                    <option value="solid">Solid</option>
+                                    <option value="dashed">Dashed</option>
+                                    <option value="dotted">Dotted</option>
+                                    <option value="double">Double</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Connections Tab -->
+                    <div class="tab-pane fade" id="tab-conn">
+                        <div class="mb-3">
+                            <label class="form-label">Existing Outgoing Connections</label>
+                            <ul class="list-group" id="currentConnectionsList">
+                                <!-- JS Populated -->
+                            </ul>
+                        </div>
+                        <hr>
+                        <h6>Add New Connection</h6>
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-5">
+                                <label class="small text-muted">Target Box</label>
+                                <select class="form-select form-select-sm" id="newConnTarget">
+                                    <option value="">Select Target...</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="small text-muted">Style</label>
+                                <select class="form-select form-select-sm" id="newConnStyle">
+                                    <option value="solid">Solid</option>
+                                    <option value="dashed">Dashed</option>
+                                    <option value="dotted">Dotted</option>
+                                </select>
+                            </div>
+                             <div class="col-md-2">
+                                <label class="small text-muted">Color</label>
+                                <input type="color" class="form-control form-control-color w-100" id="newConnColor" value="#000000">
+                            </div>
+                            <div class="col-md-2">
+                                <button class="btn btn-sm btn-primary w-100" onclick="addConnection()">Add</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            <div class="modal-footer justify-content-between">
+                <div>
+                     <button type="button" class="btn btn-outline-danger" onclick="deleteBox()">Delete Box</button>
+                </div>
+                <div>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="saveDetails()">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Serialize Model Data for JS
+    var boxesData = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.FlowBoxes, new System.Text.Json.JsonSerializerOptions 
+    { 
+        PropertyNamingPolicy = null,
+        ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles,
+        WriteIndented = false 
+    }));
+</script>
+
+<!-- Dependencies -->
+<script src="https://cdn.jsdelivr.net/npm/interactjs/dist/interact.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leader-line/1.0.7/leader-line.min.js"></script>
+<!-- Bootstrap Icons if not already included -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+
+<script>
+    var scriptLines = [];
+    var editModal;
+    var currentScale = 1;
+    var snapEnabled = false;
+    var GRID_SIZE = 20;
+
+    document.addEventListener("DOMContentLoaded", function() {
+        // editModal = new bootstrap.Modal(document.getElementById('editModal')); // Removed global init
+        
+        // Init positions from attributes
+        var boxes = document.querySelectorAll('.draggable-box');
+        boxes.forEach(function(box) {
+            var transform = box.style.transform;
+            var match = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(transform);
+            if(match) {
+                box.setAttribute('data-x', match[1]);
+                box.setAttribute('data-y', match[2]);
+            }
+        });
+        
+        // Draw lines first
+        drawLines();
+        
+        // Auto-center on Root Node (NDP 01)
+        var rootBox = boxesData.find(b => b.Name.includes("NDP 01"));
+        if (rootBox) {
+            var canvas = document.getElementById('visual-canvas');
+            var rootCenter = rootBox.PosX + (parseFloat(rootBox.Width) || 180)/2;
+            var viewCenter = canvas.clientWidth / 2;
+            
+            canvas.scrollLeft = rootCenter - viewCenter;
+            canvas.scrollTop = 0; // Top
+        }
+    });
+
+    // --- Zoom / View Logic ---
+    function setScale(s) {
+        currentScale = s;
+        var content = document.getElementById('canvas-content');
+        content.style.transform = `scale(${currentScale})`;
+        content.style.width = (5000 * currentScale) + 'px'; // Expand if needed? Actually transform origin 0 0 handles it.
+        // Actually, for scrolling to work right with scale, let's keep it simple.
+        
+        document.getElementById('zoomLevel').innerText = Math.round(currentScale * 100) + '%';
+        
+        // Lines need update
+        setTimeout(updateLines, 50);
+    }
+    
+    var savedView = null; // Store {scale, scrollLeft, scrollTop}
+    
+    function zoomIn() { setScale(currentScale + 0.1); savedView = null; }
+    function zoomOut() { if(currentScale > 0.3) setScale(currentScale - 0.1); savedView = null; }
+    
+    function resetView() { 
+        var canvas = document.getElementById('visual-canvas');
+        
+        if (savedView) {
+            // Restore
+            setScale(savedView.scale);
+            canvas.scrollLeft = savedView.scrollLeft;
+            canvas.scrollTop = savedView.scrollTop;
+            savedView = null; // Clear state
+        } else {
+            // Fit to Screen
+            // Save current state first
+            savedView = {
+                scale: currentScale,
+                scrollLeft: canvas.scrollLeft,
+                scrollTop: canvas.scrollTop
+            };
+            
+            // Calculate Fit
+            var maxRight = 0;
+            var maxBottom = 0;
+            var boxes = document.querySelectorAll('.draggable-box');
+            boxes.forEach(b => {
+                // We need parsed X/Y because style transform might be complex or scaled
+                var x = parseFloat(b.getAttribute('data-x')) || 0;
+                var y = parseFloat(b.getAttribute('data-y')) || 0;
+                var w = b.offsetWidth;
+                var h = b.offsetHeight;
+                if((x + w) > maxRight) maxRight = x + w;
+                if((y + h) > maxBottom) maxBottom = y + h;
+            });
+            
+            // Add margin
+            maxRight += 100;
+            maxBottom += 100;
+            
+            var viewW = canvas.clientWidth;
+            var viewH = canvas.clientHeight;
+            
+            var scaleX = viewW / maxRight;
+            var scaleY = viewH / maxBottom;
+            var scale = Math.min(scaleX, scaleY);
+            
+            if(scale > 1) scale = 1; 
+            if(scale < 0.2) scale = 0.2;
+            
+            setScale(scale);
+            canvas.scrollLeft = 0;
+            canvas.scrollTop = 0;
+        }
+    }
+    
+    function toggleSnap() {
+        snapEnabled = !snapEnabled;
+        var btn = document.getElementById('btnSnap');
+        if(snapEnabled) {
+            btn.classList.remove('btn-info');
+            btn.classList.add('btn-warning');
+        } else {
+            btn.classList.add('btn-info');
+            btn.classList.remove('btn-warning');
+        }
+    }
+    
+    // --- Box Selection ---
+    function selectBox(id, event) {
+        console.log('selectBox called for id:', id);
+        // Remove prior selection
+        document.querySelectorAll('.draggable-box.selected').forEach(el => el.classList.remove('selected'));
+        // Select current
+        var box = document.getElementById('box-' + id);
+        if(box) box.classList.add('selected');
+        
+        // If clicking body (not handle), maybe open edit. But handle click also propagates.
+        // Let's filter: if clicked on .box-body, open edit
+        if(event.target.closest('.box-body')) {
+            console.log('Clicked box-body, opening edit modal');
+            openEditModal(id);
+        } else {
+             console.log('Clicked outside box-body');
+        }
+        event.stopPropagation();
+    }
+    
+    // Clear selection on canvas click
+    document.getElementById('visual-canvas').addEventListener('click', function(e) {
+        if(e.target.id === 'canvas-content' || e.target.id === 'visual-canvas') {
+             document.querySelectorAll('.draggable-box.selected').forEach(el => el.classList.remove('selected'));
+        }
+    });
+
+    // --- InteractJS Draggable ---
+    interact('.box-handle')
+    .draggable({
+        inertia: true,
+        modifiers: [
+            interact.modifiers.restrictRect({ restriction: '#canvas-content', endOnly: true })
+        ],
+        autoScroll: {
+            container: document.getElementById('visual-canvas'),
+            margin: 50
+        },
+        listeners: {
+            move: dragMoveListener,
+            end: dragEndListener
+        }
+    });
+
+    // --- Drag-to-Connect Logic ---
+    var isConnecting = false;
+    var connStartId = null;
+    var tempLine = null;
+    var tempLineEl = null;
+
+    document.addEventListener('mousedown', function(e) {
+        if(e.target.classList.contains('connection-handle')) {
+            e.stopPropagation();
+            e.preventDefault();
+            
+            isConnecting = true;
+            connStartId = parseInt(e.target.getAttribute('data-id'));
+            
+            // Create temp line visual
+            var startBox = document.getElementById('box-' + connStartId);
+            
+            // Temporary dot for mouse follower
+            var mouseDot = document.createElement('div');
+            mouseDot.style.position = 'absolute';
+            mouseDot.style.width = '1px';
+            mouseDot.style.height = '1px';
+            mouseDot.style.left = e.pageX + 'px';
+            mouseDot.style.top = e.pageY + 'px';
+            mouseDot.style.pointerEvents = 'none'; // Pass through
+            document.body.appendChild(mouseDot);
+            tempLineEl = mouseDot;
+
+            tempLine = new LeaderLine(startBox, mouseDot, {
+                color: '#0d6efd',
+                size: 2,
+                dash: {animation: true},
+                startSocket: 'right',
+                endSocket: 'auto',
+                path: 'straight' // Straight line better for temp drag
+            });
+            // CRITICAL FIX: Make sure the line line doesn't block mouse events
+            if(document.querySelector('.leader-line:last-of-type')) {
+                document.querySelector('.leader-line:last-of-type').style.pointerEvents = 'none';
+            }
+        }
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if(isConnecting && tempLine && tempLineEl) {
+            tempLineEl.style.left = e.pageX + 'px';
+            tempLineEl.style.top = e.pageY + 'px';
+            tempLine.position();
+        }
+    });
+
+    document.addEventListener('mouseup', function(e) {
+        if(isConnecting) {
+            isConnecting = false;
+            // Remove temp line first to ensure it doesn't block (though pointer-events fix helps)
+            if(tempLine) { tempLine.remove(); tempLine = null; }
+            if(tempLineEl) { tempLineEl.remove(); tempLineEl = null; }
+            
+            // Robust Hit Test: Use elementsFromPoint to find the box under cursor
+            var elements = document.elementsFromPoint(e.clientX, e.clientY);
+            var targetBox = null;
+            
+            for (var i = 0; i < elements.length; i++) {
+                var el = elements[i].closest('.draggable-box');
+                if (el) {
+                    targetBox = el;
+                    break;
+                }
+            }
+            
+            if(targetBox) {
+                var targetId = parseInt(targetBox.getAttribute('data-id'));
+                if(targetId && targetId !== connStartId) {
+                    console.log('Connection detected from ' + connStartId + ' to ' + targetId);
+                    createConnection(connStartId, targetId);
+                }
+            }
+        }
+    });
+
+    function createConnection(sourceId, targetId) {
+        // Prevent duplicate check could go here
+        
+        var req = {
+            SourceBoxId: sourceId,
+            TargetBoxId: targetId,
+            ConnectionType: 'solid',
+            Color: '#000000',
+            Direction: 'right'
+        };
+        
+        fetch('/api/flow/connection/add', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify(req)
+        })
+        .then(res => res.json())
+        .then(newId => {
+            var box = boxesData.find(b => b.Id == sourceId);
+            if(box) {
+                if(!box.OutgoingConnections) box.OutgoingConnections = [];
+                req.Id = newId;
+                box.OutgoingConnections.push(req);
+                drawLines();
+            }
+        });
+    }
+
+
+    function dragMoveListener (event) {
+        var target = event.target.parentElement;
+        // Accounting for scale: divide dx/dy by scale
+        var x = (parseFloat(target.getAttribute('data-x')) || 0) + (event.dx / currentScale);
+        var y = (parseFloat(target.getAttribute('data-y')) || 0) + (event.dy / currentScale);
+
+        target.style.transform = 'translate(' + x + 'px, ' + y + 'px)';
+        target.setAttribute('data-x', x);
+        target.setAttribute('data-y', y);
+        
+        updateLines();
+    }
+
+    function dragEndListener(event) {
+        var target = event.target.parentElement;
+        var id = target.getAttribute('data-id');
+        var x = parseFloat(target.getAttribute('data-x'));
+        var y = parseFloat(target.getAttribute('data-y'));
+        
+        // Snap logic on end
+        if(snapEnabled) {
+            x = Math.round(x / GRID_SIZE) * GRID_SIZE;
+            y = Math.round(y / GRID_SIZE) * GRID_SIZE;
+            
+            // Apply snap visually
+            target.style.transform = 'translate(' + x + 'px, ' + y + 'px)';
+            target.setAttribute('data-x', x);
+            target.setAttribute('data-y', y);
+            updateLines();
+        }
+        
+        fetch('/api/flow/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: parseInt(id), x: x, y: y })
+        });
+    }
+
+    // --- Lines Logic ---
+    function drawLines() {
+        scriptLines.forEach(l => l.remove());
+        scriptLines = [];
+        
+        boxesData.forEach(box => {
+            if(!box.OutgoingConnections) return;
+            box.OutgoingConnections.forEach(conn => {
+                var start = document.getElementById('box-' + box.Id);
+                var end = document.getElementById('box-' + conn.TargetBoxId);
+                if(start && end) {
+                    // Map direction to socket
+                    var startSocket = 'bottom'; // Default
+                    if (conn.Direction) {
+                        var d = conn.Direction.toLowerCase();
+                        if (d === 'left') startSocket = 'left';
+                        else if (d === 'right') startSocket = 'right';
+                        else if (d === 'top') startSocket = 'top';
+                        // if bottom, remains bottom
+                    }
+
+                    // Create Label Element
+                    var labelEl = document.createElement('div');
+                    labelEl.className = 'conn-label';
+                    labelEl.innerHTML = `
+                        <button class="conn-btn conn-btn-delete" title="Delete Connection" onclick="deleteConnection(${conn.Id}); event.stopPropagation();">
+                            <i class="bi bi-trash-fill"></i>
+                        </button>
+                        <button class="conn-btn conn-btn-edit" title="Edit Style" onclick="openEditModal(${box.Id}); event.stopPropagation();">
+                            <i class="bi bi-gear-fill"></i>
+                        </button>
+                    `;
+
+                    var line = new LeaderLine(start, end, {
+                        color: conn.Color || '#000000',
+                        size: 1.5,
+                        path: 'grid',
+                        startSocket: startSocket,
+                        endSocket: 'top',
+                        label: labelEl
+                    });
+                    
+                    if (conn.ConnectionType === 'dotted') line.dash = {animation: true};
+                    else if (conn.ConnectionType === 'dashed') line.dash = {len: 12, gap: 6};
+                    
+                    scriptLines.push(line);
+                }
+            });
+        });
+    }
+    
+    function updateLines() {
+        scriptLines.forEach(l => {
+             l.position(); 
+        });
+    }
+    
+    // --- Edit Modal Logic ---
+    function openEditModal(id) {
+        console.log('openEditModal', id);
+        var box = boxesData.find(b => b.Id == id);
+        if(!box) { console.error('Box not found in data'); return; }
+        
+        document.getElementById('editBoxId').value = box.Id;
+        document.getElementById('editName').value = box.Name;
+        document.getElementById('editWidth').value = box.Width || '';
+        document.getElementById('editHeight').value = box.Height || '';
+        document.getElementById('editDescription').value = box.Description || '';
+        document.getElementById('editDescriptionArabic').value = box.DescriptionArabic || '';
+        
+        // Link fields
+        document.getElementById('editLinkLeftText').value = box.LinkLeftText || '';
+        document.getElementById('editLinkLeftUrl').value = box.LinkLeftUrl || '';
+        document.getElementById('editLinkMiddleText').value = box.LinkMiddleText || '';
+        document.getElementById('editLinkMiddleUrl').value = box.LinkMiddleUrl || '';
+        document.getElementById('editLinkRightText').value = box.LinkRightText || '';
+        document.getElementById('editLinkRightUrl').value = box.LinkRightUrl || '';
+        
+        document.getElementById('editBgColor').value = box.BackgroundColor || '#ffffff';
+        document.getElementById('editBorderColor').value = box.BorderColor || '#6c757d';
+        document.getElementById('editBorderStyle').value = box.BorderStyle || 'solid';
+        
+        renderConnectionsList(box);
+        populateTargetSelect(box.Id);
+        
+        // editModal.show();
+        var el = document.getElementById('editModal');
+        var modal = bootstrap.Modal.getOrCreateInstance(el);
+        modal.show();
+        console.log('Modal show called');
+    }
+    
+    function saveDetails() {
+        var id = parseInt(document.getElementById('editBoxId').value);
+        var req = {
+            Id: id,
+            Name: document.getElementById('editName').value,
+            Width: document.getElementById('editWidth').value,
+            Height: document.getElementById('editHeight').value,
+            LinkLeftText: document.getElementById('editLinkLeftText').value,
+            LinkLeftUrl: document.getElementById('editLinkLeftUrl').value,
+            LinkMiddleText: document.getElementById('editLinkMiddleText').value,
+            LinkMiddleUrl: document.getElementById('editLinkMiddleUrl').value,
+            LinkRightText: document.getElementById('editLinkRightText').value,
+            LinkRightUrl: document.getElementById('editLinkRightUrl').value,
+            BackgroundColor: document.getElementById('editBgColor').value,
+            BorderColor: document.getElementById('editBorderColor').value,
+            BorderStyle: document.getElementById('editBorderStyle').value,
+            Description: document.getElementById('editDescription').value,
+            DescriptionArabic: document.getElementById('editDescriptionArabic').value
+        };
+        
+        fetch('/api/flow/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req)
+        }).then(res => {
+            if(res.ok) {
+                var box = boxesData.find(b => b.Id == id);
+                Object.assign(box, req); 
+                document.getElementById('label-' + id).innerText = box.Name;
+                var boxEl = document.getElementById('box-' + id);
+                if(boxEl) {
+                     boxEl.style.backgroundColor = req.BackgroundColor;
+                     boxEl.style.borderColor = req.BorderColor;
+                     boxEl.style.borderStyle = req.BorderStyle;
+                     if (req.Width) boxEl.style.width = req.Width;
+                     else boxEl.style.width = '';
+                     if (req.Height) boxEl.style.height = req.Height;
+                     else boxEl.style.height = '';
+                     
+                     // Update content display
+                     var body = boxEl.querySelector('.box-body');
+                     if(body) {
+                         body.innerHTML = '';
+                         if(req.Description) body.innerHTML += `<div class="text-muted small">${req.Description}</div>`;
+                         if(req.DescriptionArabic) body.innerHTML += `<div class="fw-bold">${req.DescriptionArabic}</div>`;
+                     }
+                }
+                var el = document.getElementById('editModal');
+                bootstrap.Modal.getInstance(el).hide();
+                setTimeout(updateLines, 50); 
+            }
+        });
+    }
+
+    function deleteBox() {
+        var id = parseInt(document.getElementById('editBoxId').value);
+        if(!confirm('Are you sure you want to delete this box and all its connections?')) return;
+        
+        fetch('/api/flow/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(id)
+        }).then(res => {
+            if(res.ok) {
+                // Remove from DOM
+                var el = document.getElementById('box-' + id);
+                if(el) el.remove();
+                
+                // Remove from data
+                boxesData = boxesData.filter(b => b.Id !== id);
+                
+                // Remove lines
+                updateLines(); // Will clear and redraw based on remaining boxesData
+                // Wait, drawLines uses boxesData. updateLines just positions.
+                drawLines();
+                
+                var el = document.getElementById('editModal');
+                bootstrap.Modal.getInstance(el).hide();
+            }
+        });
+    }
+    
+    function renderConnectionsList(box) {
+        var list = document.getElementById('currentConnectionsList');
+        list.innerHTML = '';
+        if(!box.OutgoingConnections) box.OutgoingConnections = [];
+        
+        box.OutgoingConnections.forEach(conn => {
+            var targetBox = boxesData.find(b => b.Id == conn.TargetBoxId);
+            var targetName = targetBox ? targetBox.Name : 'Unknown';
+            
+            var li = document.createElement('li');
+            li.className = 'list-group-item';
+            
+            // Flex row for basic info
+            var row1 = document.createElement('div');
+            row1.className = 'd-flex justify-content-between align-items-center mb-1';
+            row1.innerHTML = `<span>To: <strong>${targetName}</strong></span>`;
+            
+            // Delete button
+            var btnDel = document.createElement('button');
+            btnDel.className = 'btn btn-sm btn-danger';
+            btnDel.innerText = 'X';
+            btnDel.onclick = function() { deleteConnection(conn.Id); };
+            row1.appendChild(btnDel);
+            
+            li.appendChild(row1);
+            
+            // Flex row for inline editing
+            var row2 = document.createElement('div');
+            row2.className = 'd-flex align-items-center gap-2';
+            
+            // Style Selector
+            var selStyle = document.createElement('select');
+            selStyle.className = 'form-select form-select-sm py-0';
+            selStyle.style.width = 'auto';
+            ['solid', 'dashed', 'dotted'].forEach(s => {
+                var opt = document.createElement('option');
+                opt.value = s;
+                opt.innerText = s;
+                if(s == conn.ConnectionType) opt.selected = true;
+                selStyle.appendChild(opt);
+            });
+            selStyle.onchange = function() { updateConnection(conn.Id, this.value, conn.Color, conn.Direction); };
+            
+            // Color Input
+            var inpColor = document.createElement('input');
+            inpColor.type = 'color';
+            inpColor.className = 'form-control form-control-color form-control-sm';
+            inpColor.value = conn.Color || '#000000';
+            inpColor.title = 'Change Color';
+            inpColor.onchange = function() { updateConnection(conn.Id, conn.ConnectionType, this.value, conn.Direction); };
+            
+            // Direction Selector
+            var selDir = document.createElement('select');
+            selDir.className = 'form-select form-select-sm py-0';
+            selDir.style.width = 'auto';
+            ['Bottom', 'Right', 'Left', 'Top'].forEach(d => {
+                var opt = document.createElement('option');
+                opt.value = d;
+                opt.innerText = d;
+                // Default handling if null
+                var currentDir = conn.Direction || 'Right'; 
+                if(d.toLowerCase() === currentDir.toLowerCase()) opt.selected = true;
+                selDir.appendChild(opt);
+            });
+            selDir.onchange = function() { updateConnection(conn.Id, conn.ConnectionType, conn.Color, this.value); };
+
+            row2.appendChild(selStyle);
+            row2.appendChild(selDir);
+            row2.appendChild(inpColor);
+            
+            li.appendChild(row2);
+            list.appendChild(li);
+        });
+    }
+
+    function updateConnection(id, type, color, direction) {
+        fetch('/api/flow/connection/update', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ Id: id, ConnectionType: type, Color: color, Direction: direction })
+        }).then(res => {
+            if(res.ok) {
+                 // Update local model
+                 boxesData.forEach(b => {
+                     if(b.OutgoingConnections) {
+                         var c = b.OutgoingConnections.find(x => x.Id == id);
+                         if(c) {
+                             c.ConnectionType = type;
+                             c.Color = color;
+                             c.Direction = direction;
+                         }
+                     }
+                 });
+                 // Redraw
+                 drawLines();
+            }
+        });
+    }
+
+    
+    function populateTargetSelect(currentId) {
+        var sel = document.getElementById('newConnTarget');
+        sel.innerHTML = '<option value="">Select Target...</option>';
+        boxesData.forEach(b => {
+            if(b.Id != currentId) {
+                var opt = document.createElement('option');
+                opt.value = b.Id;
+                opt.innerText = b.Name;
+                sel.appendChild(opt);
+            }
+        });
+    }
+    
+    function addConnection() {
+        var sourceId = parseInt(document.getElementById('editBoxId').value);
+        var targetId = parseInt(document.getElementById('newConnTarget').value);
+        if(!targetId) return;
+        
+        var req = {
+            SourceBoxId: sourceId,
+            TargetBoxId: targetId,
+            ConnectionType: document.getElementById('newConnStyle').value,
+            Color: document.getElementById('newConnColor').value,
+            Direction: 'right'
+        };
+        
+        fetch('/api/flow/connection/add', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify(req)
+        })
+        .then(res => res.json())
+        .then(newId => {
+            var box = boxesData.find(b => b.Id == sourceId);
+            req.Id = newId; 
+            box.OutgoingConnections.push(req);
+            renderConnectionsList(box);
+            drawLines();
+        });
+    }
+    
+    function deleteConnection(connId) {
+         fetch('/api/flow/connection/delete?id=' + connId, { method: 'POST' })
+         .then(res => {
+             if(res.ok) {
+                 var sourceId = parseInt(document.getElementById('editBoxId').value);
+                 var box = boxesData.find(b => b.Id == sourceId);
+                 box.OutgoingConnections = box.OutgoingConnections.filter(c => c.Id !== connId);
+                 renderConnectionsList(box);
+                 drawLines();
+             }
+         });
+    }
+    
+    // Cleanup lines on scroll
+    window.addEventListener('resize', updateLines);
+    document.getElementById('visual-canvas').addEventListener('scroll', updateLines);
+</script>

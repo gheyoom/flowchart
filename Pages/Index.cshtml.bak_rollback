@@ -1,0 +1,700 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Flowchart";
+}
+
+
+
+<!-- Container for the boxes. Flex-wrap allows them to flow, but we might rely on absolute layout for complex graphs. 
+     For now, we keep flex/grid and let lines draw over it. -->
+<div class="flow-container" id="flowContainer" dir="rtl" style="position: relative;">
+    @foreach (var box in Model.FlowBoxes)
+    {
+        <div class="flow-box mb-0" id="box-@box.Id" 
+             style="position: absolute; left: @(box.PosX)px; top: @(box.PosY)px; z-index: 10; 
+                    background-color: @box.BackgroundColor; border-color: @box.BorderColor; border-style: @box.BorderStyle;
+                    @(string.IsNullOrEmpty(box.Width) ? "" : $"min-width: {box.Width};") @(string.IsNullOrEmpty(box.Height) ? "" : $"min-height: {box.Height};")">
+            <div class="box-header">
+                <h3>@box.Name</h3>
+            </div>
+            <div class="box-content">
+                @if (!string.IsNullOrEmpty(box.Description)) { <div class="text-muted small">@box.Description</div> }
+                @if (!string.IsNullOrEmpty(box.DescriptionArabic)) { <div class="fw-bold">@box.DescriptionArabic</div> }
+            </div>
+            <div class="box-links">
+                <div class="link-item text-end">
+                    @if (!string.IsNullOrEmpty(box.LinkRightUrl))
+                    {
+                        <a href="@box.LinkRightUrl" target="_blank" class="flow-link">
+                             <i class="bi bi-file-earmark-image"></i> @(box.LinkRightText ?? "Link")
+                        </a>
+                    }
+                </div>
+                <div class="link-item text-center">
+                    @if (!string.IsNullOrEmpty(box.LinkMiddleUrl))
+                    {
+                        <a href="@box.LinkMiddleUrl" target="_blank" class="flow-link">
+                             <i class="bi bi-file-earmark-text"></i> @(box.LinkMiddleText ?? "Link")
+                        </a>
+                    }
+                </div>
+                <div class="link-item text-start">
+                    @if (!string.IsNullOrEmpty(box.LinkLeftUrl))
+                    {
+                        <a href="@box.LinkLeftUrl" target="_blank" class="flow-link">
+                            <i class="bi bi-file-earmark-pdf"></i> @(box.LinkLeftText ?? "Link")
+                        </a>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<!-- Render connections data to JSON for JS to consume -->
+<script id="connectionData" type="application/json">
+    @Html.Raw(Model.ConnectionJson)
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leader-line/1.0.7/leader-line.min.js"></script>
+<script>
+    // Global storage for lines
+    window.leaderLines = [];
+
+    function drawLines() {
+        // Clear existing
+        if (window.leaderLines) {
+            window.leaderLines.forEach(l => { try { l.remove(); } catch(e){} });
+        }
+        window.leaderLines = [];
+
+        var dataString = document.getElementById('connectionData').textContent;
+        var connections = JSON.parse(dataString);
+        var lines = [];
+
+        connections.forEach(function(conn) {
+            var startElement = document.getElementById(conn.source);
+            var endElement = document.getElementById(conn.target);
+
+            if (startElement && endElement) {
+                var startSocket = conn.direction || 'bottom';
+
+                var line = new LeaderLine(
+                    startElement,
+                    endElement,
+                    {
+                        color: conn.color || '#000000',
+                        size: 1.5,
+                        path: 'grid',
+                        startSocket: startSocket,
+                        endSocket: 'top',
+                        parent: document.getElementById('flowContainer') // Keep inside container
+                    }
+                );
+                
+                if (conn.style === 'dotted') {
+                    line.dash = {animation: true};
+                } else if (conn.style === 'dashed') {
+                    line.dash = {len: 12, gap: 6};
+                }
+                
+                // --- FREEZE FIX ---
+                // Override position function to prevent auto-recalculation
+                // because LeaderLine gets confused by our CSS transform scaling on the parent.
+                // We draw it ONCE at Scale 1, then freeze it.
+                line.position = function() { return; };
+                
+                lines.push(line);
+            }
+        });
+        
+        window.leaderLines = lines;
+    }
+
+    // --- Zoom Logic ---
+    var currentScale = 1;
+    var container = document.getElementById('flowContainer');
+
+    function setScale(scale) {
+        currentScale = scale;
+        // transform-origin 50% 0 keeps it centered at the top
+        container.style.transformOrigin = '50% 0'; 
+        container.style.transform = 'scale(' + currentScale + ')';
+        document.getElementById('zoomLevel').innerText = Math.round(currentScale * 100) + '%';
+        
+        // NO line updates here. Geometric scaling handles it.
+    }
+
+    function zoomIn() {
+        setScale(currentScale + 0.1);
+    }
+
+    function zoomOut() {
+        if(currentScale > 0.2) setScale(currentScale - 0.1);
+    }
+
+    function resetZoom() {
+        fitToScreen();
+    }
+
+    function fitToScreen() {
+        console.log("Fitting to screen...");
+        // Calculate required scale
+        var maxRight = 0;
+        var maxBottom = 0; 
+        
+        var boxes = document.querySelectorAll('.flow-box');
+        boxes.forEach(b => {
+             var right = b.offsetLeft + b.offsetWidth;
+             if(right > maxRight) maxRight = right;
+             
+             var bottom = b.offsetTop + b.offsetHeight;
+             if(bottom > maxBottom) maxBottom = bottom;
+        });
+
+        // Check LeaderLines (Unscaled because we are currently at Scale 1 during init, or we unscale math)
+        // If lines are drawn at Scale 1, their rects are Scale 1.
+        if (window.leaderLines) {
+            window.leaderLines.forEach(line => {
+                if (line.element) {
+                     var rect = line.element.getBoundingClientRect();
+                     // If container is scaled, rect is scaled. 
+                     // But we want to set height based on unscaled content.
+                     // If we are calling this from initLayout, we just reset scale to 1.
+                     // So rects are unscaled (1:1). 
+                     
+                     var containerRect = document.getElementById('flowContainer').getBoundingClientRect();
+                     var relativeBottom = rect.bottom - containerRect.top;
+                     
+                     // If currentScale is NOT 1, we divide. 
+                     // But ideally we rely on the fact that we reset scale before drawing?
+                     // Let's just divide by currentScale to be safe if called later.
+                     
+                     var effectiveScale = currentScale || 1; 
+                     // If we just reset to 1 in initLayout, currentScale might still say 1.
+                     
+                     var unscaledBottom = relativeBottom / effectiveScale;
+                     if (unscaledBottom > maxBottom) maxBottom = unscaledBottom;
+                }
+            });
+        }
+
+        // Add some margin
+        maxRight += 100;
+        maxBottom += 200; 
+
+        // Update container height
+        container.style.height = maxBottom + 'px';
+
+        var availableWidth = window.innerWidth - 40; 
+        var scale = availableWidth / maxRight;
+        
+        if(scale > 1) scale = 1; 
+        if(scale < 0.2) scale = 0.2;
+        
+        setScale(scale);
+    }
+
+    var initRun = false;
+    function initLayout() {
+        // Debounce if needed, but for resize/load we generally want to run
+        
+        console.log("Initializing Layout...");
+        // 1. Reset Scale to 1 so measurements are accurate and lines draw 1:1
+        setScale(1);
+        
+        // 2. Draw Lines (at 1:1)
+        drawLines();
+        
+        // 3. Fit to screen (calculate scale and apply)
+        setTimeout(fitToScreen, 50);
+        
+        // 4. Safety check
+        setTimeout(function() {
+            var domLines = document.querySelectorAll('.leader-line');
+            if (domLines.length === 0 && window.leaderLines && window.leaderLines.length === 0) {
+                 console.warn("Retrying drawLines...");
+                 drawLines();
+                 fitToScreen();
+            }
+        }, 1000);
+    }
+
+    if (document.readyState === 'complete') {
+        initLayout();
+    } else {
+        window.addEventListener("load", function() { initLayout(); });
+    }
+    
+    // Resize handler
+    var resizeTimer;
+    window.addEventListener('resize', function() {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function() {
+            // Must full re-init because we disabled auto-updates
+            initLayout(); 
+        }, 200);
+    });
+        
+        // Auto-center on Root Node
+        // Parse raw connection json again or just find element by text if cleaner... actually we have 'connections' but not boxes data directly in JS var.
+        // Let's use DOM lookup for "NDP 01"
+        var boxes = document.querySelectorAll('.flow-box h3');
+        var rootHeader = Array.from(boxes).find(h => h.innerText.includes("NDP 01"));
+        if(rootHeader) {
+            var rootEl = rootHeader.closest('.flow-box');
+            var container = document.getElementById('flowContainer');
+            
+            // Calculate center
+            var rootRect = rootEl.getBoundingClientRect();
+            var containerRect = container.getBoundingClientRect();
+            
+            // We need relative position inside container
+            var rootLeft = parseFloat(rootEl.style.left); 
+            var rootWidth = rootEl.offsetWidth;
+            
+            var viewWidth = container.clientWidth;
+            
+            // Standard scroll
+            window.scrollTo({
+                left: rootLeft + (rootWidth/2) - (window.innerWidth/2), 
+                behavior: 'smooth'
+            });
+            // Or if container has overflow
+            // But main scroll is body usually.
+        }
+
+
+    function getSocket(dir, type) {
+        // Simple mapping. Can be enhanced.
+        // dir is e.g. "right". 
+        // If dir is "right", source should exit from right, target enter from left?
+        // Or strictly user defined? 
+        // Let's assume user defined is "Where it leaves source". target socket auto-calculated or opposite?
+        
+        // Simplified logic:
+        // if user says "Right", source exits Right, target enters Left.
+        if (!dir) return 'auto';
+        dir = dir.toLowerCase();
+        
+        if (type === 'start') return dir;
+        
+        // Opposite for end
+        if (dir === 'right') return 'left';
+        if (dir === 'left') return 'right';
+        if (dir === 'top') return 'bottom';
+        if (dir === 'bottom') return 'top';
+        
+        return 'auto';
+    }
+</script>
+
+<style>
+    @@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap');
+
+    body {
+        font-family: 'Cairo', sans-serif;
+        background-color: #f8f9fa;
+    }
+
+    /* Hide the main page heading */
+    .container h1 {
+        display: none;
+    }
+
+    .flow-container {
+        /* display: flex;  -- Removed for canvas layout */
+        /* flex-wrap: wrap; */
+        /* justify-content: center; */
+        /* gap: 4rem; */
+        padding: 0;
+        position: relative; 
+        background-color: #f8f9fa;
+        min-height: 800px;
+    }
+
+    .flow-box {
+        /* position: relative; -- Handled inline */
+        background: #fff;
+        border: 2px solid #0d6efd;
+        border-radius: 8px;
+        /* Auto sizing */
+        width: fit-content;
+        min-width: 250px;
+        max-width: 600px; /* Increased to allow more text */
+        overflow-wrap: break-word; /* Ensure text wraps */
+        
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        display: flex;
+        flex-direction: column;
+        min-height: 120px;
+        z-index: 10; /* Above lines */
+        position: relative; 
+    }
+
+    .box-header {
+        background: #f1f5f9;
+        padding: 0.75rem 1.5rem;
+        border-bottom: 1px solid #dee2e6;
+        border-radius: 6px 6px 0 0;
+        text-align: center;
+    }
+
+    .box-header h3 {
+        margin: 0;
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #0d6efd;
+    }
+
+    .box-content {
+        padding: 1rem;
+        flex-grow: 1;
+        text-align: center;
+    }
+
+    .box-links {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.75rem;
+        background: #fff;
+        border-radius: 0 0 6px 6px;
+        border-top: 1px solid #eee;
+        gap: 10px;
+    }
+
+    .link-item {
+        /* flex: 1; removed to let content dictate size */ 
+    }
+    
+    .flow-link {
+        text-decoration: none;
+        color: #495057;
+        font-weight: 600;
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: color 0.2s;
+        font-size: 0.9rem;
+    }
+
+    .flow-link:hover {
+        background-color: #e9ecef;
+        color: #0d6efd;
+    }
+    
+    /* Hide the old CSS arrows since we use LeaderLine */
+    .flow-arrow {
+        display: none;
+    }
+
+    /* Legend Styles */
+    .legend-container {
+        position: fixed;
+        top: 75%; /* Moved down */
+        transform: translateY(-50%);
+        left: 10px;
+        /* Glassmorphism */
+        background: rgba(255, 255, 255, 0.35);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.4);
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.2);
+        
+        border-radius: 8px;
+        padding: 0; /* Padding moved to children */
+        z-index: 1000;
+        direction: rtl;
+        text-align: right;
+        font-family: 'Cairo', sans-serif;
+        max-width: 230px;
+        transition: all 0.3s ease;
+        overflow: hidden;
+    }
+
+    .legend-header {
+        padding: 10px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: rgba(255,255,255,0.2);
+        border-bottom: 1px solid rgba(0,0,0,0.05);
+        user-select: none;
+    }
+
+    .legend-title-text {
+        font-weight: 700;
+        font-size: 0.85rem;
+    }
+
+    .legend-toggle-icon {
+        font-size: 0.8rem;
+        transition: transform 0.3s;
+    }
+
+    .legend-content {
+        padding: 10px;
+        transition: all 0.3s ease-in-out;
+        max-height: 500px; /* Arbitrary large height for animation */
+        opacity: 1;
+    }
+
+    /* Collapsed State */
+    .legend-container.collapsed {
+        max-width: 40px; /* Narrow strip */
+        border-radius: 0 8px 8px 0; /* Rounded on right side only */
+        left: 0;
+    }
+    
+    .legend-container.collapsed .legend-content {
+        max-height: 0;
+        opacity: 0;
+        padding: 0;
+        margin: 0;
+        width: 0; /* Hide content width */
+        overflow: hidden;
+    }
+    
+    .legend-container.collapsed .legend-header {
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        padding: 15px 5px;
+        height: auto;
+        min-height: 120px;
+        justify-content: center;
+        gap: 10px;
+        border-bottom: none;
+    }
+
+    .legend-container.collapsed .legend-title-text {
+         transform: rotate(180deg); /* Adjust for Arabic vertical reading if needed, or keep default */
+    }
+    
+    .legend-container.collapsed .legend-toggle-icon {
+        transform: rotate(-90deg);
+        margin-bottom: 5px;
+    }
+    
+    /* Hover effect for header */
+    .legend-header:hover {
+        background: rgba(255,255,255,0.4);
+    }
+
+    .legend-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 5px;
+        font-size: 0.7rem;
+        color: #222;
+        font-weight: 600;
+    }
+
+    .legend-box {
+        width: 20px;
+        height: 14px;
+        margin-left: 6px;
+        border: 1px solid #000;
+        flex-shrink: 0;
+    }
+
+    /* Secret */
+    .l-secret {
+        border: 2px dashed red;
+        background: transparent;
+    }
+
+    /* Approved */
+    .l-approved {
+        border: 2px solid black;
+        background: white;
+    }
+
+    /* Needs Review */
+    .l-review {
+        border: 1px solid black;
+        background: #C1E1C1;
+    }
+
+    /* Preparation */
+    .l-prep {
+        border: 1px solid black;
+        background: #FADADD;
+    }
+
+    /* Included */
+    .l-included {
+        border: 1px solid black;
+        background: #0070C0;
+    }
+
+    /* Authority */
+    .l-auth {
+        border: 1px solid black;
+        background: #FFFF00;
+    }
+
+    /* Domain */
+    .l-domain {
+        border: 1px solid black;
+        background: #F4B084;
+    }
+
+    /* Translated */
+    .l-trans {
+        border: 1px solid black;
+        background: white;
+        position: relative;
+    }
+    .l-trans::after {
+        content: '';
+        position: absolute;
+        bottom: 1px;
+        left: 1px;
+        width: 7px;
+        height: 7px;
+        background: yellow;
+        border: 1px solid black;
+    }
+
+    /* Summary */
+    .l-summary {
+        border: 1px solid black;
+        background: white;
+        text-align: center;
+        font-weight: bold;
+        line-height: 12px;
+        font-size: 9px;
+    }
+</style>
+
+<div class="legend-container collapsed" id="legendContainer">
+    <div class="legend-header" onclick="toggleLegend()">
+        <span class="legend-title-text">مفتاح الخريطة</span>
+        <span class="legend-toggle-icon">◀</span>
+    </div>
+    <div class="legend-content">
+        @foreach (var item in Model.LegendItems)
+        {
+            <div class="legend-item">
+                <div class="legend-box" style="background-color: @item.BackgroundColor; border: @(item.BorderStyle == "dashed" ? "2px dashed" : item.BorderStyle == "dotted" ? "2px dotted" : "1px solid") @item.BorderColor;">
+                     @if(item.Title.Contains("Summary")) { <span>S</span> }
+                </div>
+                <span>@item.Title</span>
+            </div>
+        }
+    </div>
+</div>
+
+<script>
+    function toggleLegend() {
+        var el = document.getElementById('legendContainer');
+        el.classList.toggle('collapsed');
+        var icon = el.querySelector('.legend-toggle-icon');
+        // Icon rotation is handled by CSS mostly, but let's just stick to one char or remove the char change if we rely on rotation.
+        // Let's keep it simple: Arrow Left when collapsed (pointing into screen), Arrow Down when open.
+        if(el.classList.contains('collapsed')) {
+             icon.innerText = '◀'; 
+        } else {
+             icon.innerText = '▼';
+        }
+    }
+
+    // --- Zoom Logic ---
+    var currentScale = 1;
+    var container = document.getElementById('flowContainer');
+    // Global variable to store content width for centering calculations
+    var maxContentWidth = 0; 
+
+    function setScale(scale) {
+        currentScale = scale;
+        
+        // Use Top-Left origin to avoid LeaderLine drift issues
+        container.style.transformOrigin = '0 0';
+        
+        // Calculate offset to center the content
+        // We use maxContentWidth which is updated by fitToScreen
+        // If maxContentWidth is 0 (first run before fitToScreen completes), default to 0 offset.
+        var offsetX = 0;
+        if (maxContentWidth > 0) {
+             var scaledWidth = maxContentWidth * scale;
+             var windowWidth = window.innerWidth;
+             if (windowWidth > scaledWidth) {
+                 offsetX = (windowWidth - scaledWidth) / 2;
+             } else {
+                 // Align right (RTL) or keep left?
+                 // RTL: logic might be tricky. If direction is RTL, 0,0 is Top-Right?
+                 // No, transform origin 0 0 is strictly Top-Left of element in CSS even in RTL usually,
+                 // but let's check dir="rtl" on container.
+                 // If dir="rtl", origin '0 0' is Top-Right?
+                 // Let's assume standard CSS coordinate system where 0,0 is Top-Left unless changed.
+                 
+                 // If content is larger than window, usually we align start (right for RTL).
+                 // But transform-origin 0,0 is top-left.
+                 // Let's stick to centering if smaller, and maybe 0 if larger (scrolling).
+                 offsetX = 0;
+                 
+                 // For RTL, we might want to ensure we start at the right edge?
+                 // If we scale from Top-Left, the content shrinks towards Top-Left.
+                 // In RTL, we want it to shrink towards Top-Right?
+                 // Let's try centering first. Logic: Center of Screen = Center of Diagram.
+             }
+        }
+        
+        container.style.transform = 'translate(' + offsetX + 'px, 0px) scale(' + currentScale + ')';
+        document.getElementById('zoomLevel').innerText = Math.round(currentScale * 100) + '%';
+        
+        // Update lines - DISABLED for Scaled Container approach
+        // if(window.leaderLines) { 
+        //      window.leaderLines.forEach(l => l.position()); 
+        // }
+    }
+
+    function zoomIn() {
+        setScale(currentScale + 0.1);
+    }
+
+    function zoomOut() {
+        if(currentScale > 0.2) setScale(currentScale - 0.1);
+    }
+
+    function resetZoom() {
+        fitToScreen();
+    }
+
+
+</script>
+
+<!-- Zoom Controls -->
+<div class="zoom-controls">
+    <button onclick="zoomIn()" class="btn btn-light btn-sm" title="Zoom In">+</button>
+    <button onclick="resetZoom()" class="btn btn-light btn-sm" title="Fit to Screen/Reset">
+        <span id="zoomLevel">100%</span>
+    </button>
+    <button onclick="zoomOut()" class="btn btn-light btn-sm" title="Zoom Out">-</button>
+</div>
+
+<style>
+   .zoom-controls {
+       position: fixed;
+       bottom: 20px;
+       right: 20px;
+       display: flex;
+       flex-direction: column;
+       gap: 5px;
+       background: rgba(255,255,255,0.8);
+       backdrop-filter: blur(5px);
+       padding: 8px;
+       border-radius: 8px;
+       border: 1px solid rgba(0,0,0,0.1);
+       z-index: 1001;
+       box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+   }
+   
+   .zoom-controls button {
+       width: 40px;
+       font-weight: bold;
+       border: 1px solid #ccc;
+   }
+</style>

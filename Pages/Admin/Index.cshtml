@@ -1,0 +1,47 @@
+@page
+@model FlowChartApp.Pages.Admin.IndexModel
+
+<h1>FlowChart Admin</h1>
+
+<p>
+    <a asp-page="Create" class="btn btn-primary">Create New Box</a>
+    <a asp-page="Visual" class="btn btn-success ms-2"><i class="bi bi-diagram-3"></i> Visual Editor</a>
+</p>
+
+<table class="table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Order</th>
+            <th>Link Left</th>
+            <th>Link Middle</th>
+            <th>Link Right</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+@foreach (var item in Model.FlowBox) {
+        <tr>
+            <td>
+                @Html.DisplayFor(modelItem => item.Name)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.OrderIndex)
+            </td>
+            <td>
+                @item.LinkLeftText
+            </td>
+            <td>
+                @item.LinkMiddleText
+            </td>
+            <td>
+                @item.LinkRightText
+            </td>
+            <td>
+                <a asp-page="./Edit" asp-route-id="@item.Id">Edit</a> |
+                <a asp-page="./Delete" asp-route-id="@item.Id">Delete</a>
+            </td>
+        </tr>
+}
+    </tbody>
+</table>
